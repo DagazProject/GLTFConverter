@@ -23,7 +23,7 @@ import { Logo } from '../icons/Logo.tsx'
 import { saveCurrentProject } from '../saveProject.ts'
 
 const PRIMITIVES: PrimitiveKind[] = ['box', 'sphere', 'cylinder', 'plane', 'torus']
-const LIGHTS: LightType[] = ['directional', 'point', 'spot', 'ambient', 'hemisphere']
+const LIGHTS: LightType[] = ['directional', 'point', 'spot', 'rect', 'ambient', 'hemisphere']
 const PANELS: { id: PanelId; label: string }[] = [
   { id: 'scene', label: 'Сцена' },
   { id: 'inspector', label: 'Инспектор' },

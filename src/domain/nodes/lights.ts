@@ -6,19 +6,32 @@ export type LightType =
   | 'directional'
   | 'point'
   | 'spot'
+  | 'rect'
 
+/** Unreal-flavoured light parameters. */
 export interface LightData {
   type: LightType
   color: RGB
   intensity: number
-  /** point/spot */
+
+  /** Use a colour temperature (Kelvin) as the light colour, like Unreal. */
+  useTemperature?: boolean
+  temperature?: number
+
+  /** Attenuation radius (point/spot/rect). 0 = unbounded. */
   distance?: number
   decay?: number
-  /** spot */
+
+  /** Spot cone angles, in radians. */
   angle?: number
   penumbra?: number
-  /** hemisphere */
+
+  /** Rect (area) light source size. */
+  width?: number
+  height?: number
+
+  /** Hemisphere ground colour. */
   groundColor?: RGB
-  /** directional/spot cast shadows */
+
   castShadow?: boolean
 }

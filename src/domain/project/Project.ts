@@ -41,7 +41,7 @@ export const createEmptyProject = (name = 'Untitled'): Project => {
     },
     scene: emptySceneGraph(),
     assets: emptyAssetRegistry(),
-    environment: { background: rgb(0.02, 0.024, 0.043) },
+    environment: { background: rgb(0.2, 0.21, 0.23) },
   }
 }
 

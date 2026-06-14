@@ -327,6 +327,23 @@ input[type='checkbox'] {
 }
 
 /* UV editor */
+.uv-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.uv-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.uv-toolbar .sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 3px;
+}
 .uv-canvas {
   display: block;
   width: 100%;

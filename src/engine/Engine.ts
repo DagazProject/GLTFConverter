@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { ViewHelper } from 'three/examples/jsm/helpers/ViewHelper.js'
+import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js'
 import type { Project } from '../domain/project/Project.ts'
 import type { NodeId } from '../domain/scene/ids.ts'
 import type { Transform } from '../domain/scene/Transform.ts'
@@ -82,6 +83,9 @@ export class Engine {
     })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     this.renderer.setSize(container.clientWidth || 1, container.clientHeight || 1)
+    this.renderer.shadowMap.enabled = true
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    RectAreaLightUniformsLib.init()
     container.appendChild(this.renderer.domElement)
 
     this.contentRoot.name = 'ContentRoot'

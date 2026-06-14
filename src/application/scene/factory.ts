@@ -49,17 +49,32 @@ export const createPrimitiveFragment = (kind: PrimitiveKind): SceneFragment => {
 }
 
 const defaultLight = (type: LightType): LightData => {
-  const base: LightData = { type, color: rgb(1, 1, 1), intensity: 1 }
+  const base: LightData = {
+    type,
+    color: rgb(1, 1, 1),
+    intensity: 1,
+    useTemperature: false,
+    temperature: 6500,
+  }
   if (type === 'point' || type === 'spot') {
-    base.intensity = 12
+    base.intensity = 40
     base.distance = 0
     base.decay = 2
+    base.castShadow = true
   }
   if (type === 'spot') {
     base.angle = Math.PI / 6
-    base.penumbra = 0.2
+    base.penumbra = 0.3
   }
-  if (type === 'directional') base.intensity = 2
+  if (type === 'rect') {
+    base.intensity = 6
+    base.width = 4
+    base.height = 4
+  }
+  if (type === 'directional') {
+    base.intensity = 3
+    base.castShadow = true
+  }
   if (type === 'hemisphere') base.groundColor = rgb(0.2, 0.2, 0.25)
   return base
 }
@@ -70,12 +85,13 @@ const LIGHT_LABEL: Record<LightType, string> = {
   directional: 'Directional Light',
   point: 'Point Light',
   spot: 'Spot Light',
+  rect: 'Rect Light',
 }
 
 export const createLightFragment = (type: LightType): SceneFragment => {
   const fragment = emptyFragment()
   const node = createLightNode(defaultLight(type), LIGHT_LABEL[type])
-  if (type === 'directional' || type === 'spot' || type === 'point') {
+  if (type !== 'ambient' && type !== 'hemisphere') {
     node.transform.position = { x: 3, y: 5, z: 4 }
   }
   fragment.nodes[node.id] = node

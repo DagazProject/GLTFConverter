@@ -4,6 +4,7 @@ import type { MeshNode, SceneNode } from '../domain/nodes/SceneNode.ts'
 import type { Project } from '../domain/project/Project.ts'
 import type { NodeId } from '../domain/scene/ids.ts'
 import type { Transform } from '../domain/scene/Transform.ts'
+import { kelvinToRgb } from '../domain/math/temperature.ts'
 import { AssetFactory } from './asset/AssetFactory.ts'
 
 interface Entry {
@@ -132,19 +133,38 @@ export class SceneSynchronizer {
     mesh.geometry = this.factory.getGeometry(node.geometryId)
     disposeMaterial(mesh.material)
     mesh.material = this.factory.buildMaterials(node.materialIds)
+    mesh.castShadow = true
+    mesh.receiveShadow = true
   }
 
   private updateLight(obj: THREE.Object3D, data: LightData): void {
     const light = obj as THREE.Light
-    light.color?.setRGB(data.color.r, data.color.g, data.color.b, THREE.SRGBColorSpace)
+    // Effective colour: temperature tints the chosen colour (Unreal-style).
+    const tint = data.color
+    const c = data.useTemperature
+      ? (() => {
+          const k = kelvinToRgb(data.temperature ?? 6500)
+          return { r: k.r * tint.r, g: k.g * tint.g, b: k.b * tint.b }
+        })()
+      : tint
+    light.color?.setRGB(c.r, c.g, c.b, THREE.SRGBColorSpace)
     light.intensity = data.intensity
+
     if (light instanceof THREE.PointLight || light instanceof THREE.SpotLight) {
       if (data.distance !== undefined) light.distance = data.distance
-      if (data.decay !== undefined) light.decay = data.decay
+      light.decay = data.decay ?? 2
+      light.castShadow = Boolean(data.castShadow)
     }
     if (light instanceof THREE.SpotLight) {
       if (data.angle !== undefined) light.angle = data.angle
       if (data.penumbra !== undefined) light.penumbra = data.penumbra
+    }
+    if (light instanceof THREE.DirectionalLight) {
+      light.castShadow = Boolean(data.castShadow)
+    }
+    if (light instanceof THREE.RectAreaLight) {
+      if (data.width !== undefined) light.width = data.width
+      if (data.height !== undefined) light.height = data.height
     }
     if (light instanceof THREE.HemisphereLight && data.groundColor) {
       light.groundColor.setRGB(
@@ -182,6 +202,8 @@ const createLight = (data: LightData): THREE.Light => {
       return new THREE.PointLight(0xffffff, data.intensity)
     case 'spot':
       return new THREE.SpotLight(0xffffff, data.intensity)
+    case 'rect':
+      return new THREE.RectAreaLight(0xffffff, data.intensity, data.width ?? 4, data.height ?? 4)
     case 'directional':
     default:
       return new THREE.DirectionalLight(0xffffff, data.intensity)
