@@ -1,6 +1,7 @@
 import type { MaterialAsset, TextureSlot } from '../../../domain/assets/MaterialAsset.ts'
 import { TEXTURE_SLOTS } from '../../../domain/assets/MaterialAsset.ts'
 import { newAssetId } from '../../../domain/scene/ids.ts'
+import type { AssetId } from '../../../domain/scene/ids.ts'
 import { readFileAsDataUrl } from '../../../infrastructure/files/fileRead.ts'
 import { useProjectStore } from '../../../state/useProjectStore.ts'
 import { CheckField, ColorField, NumberField, SliderField } from './widgets.tsx'
@@ -114,15 +115,31 @@ export function MaterialCard({ material }: { material: MaterialAsset }) {
           <div className="field" key={slot}>
             <label>{slot}</label>
             <div className="swatch-row">
-              <button
-                type="button"
-                onClick={(e) =>
-                  (
-                    e.currentTarget.nextElementSibling as HTMLInputElement
-                  )?.click()
+              <select
+                value={texId ?? ''}
+                onChange={(e) =>
+                  setMaterialTexture(
+                    material.id,
+                    slot,
+                    e.target.value ? (e.target.value as AssetId) : undefined,
+                  )
                 }
               >
-                {texId ? textures[texId]?.name ?? 'texture' : 'выбрать…'}
+                <option value="">— нет —</option>
+                {Object.values(textures).map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                title="Загрузить новую"
+                onClick={(e) =>
+                  (e.currentTarget.nextElementSibling as HTMLInputElement)?.click()
+                }
+              >
+                +
               </button>
               <input
                 type="file"
@@ -134,11 +151,6 @@ export function MaterialCard({ material }: { material: MaterialAsset }) {
                   e.target.value = ''
                 }}
               />
-              {texId && (
-                <button onClick={() => setMaterialTexture(material.id, slot, undefined)}>
-                  ✕
-                </button>
-              )}
             </div>
           </div>
         )

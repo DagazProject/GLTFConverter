@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type PanelId = 'scene' | 'inspector' | 'assets'
+export type PanelId = 'scene' | 'inspector' | 'assets' | 'uv'
 export type Side = 'left' | 'right'
 
 interface LayoutState {
@@ -16,9 +16,9 @@ interface LayoutState {
 const without = (arr: PanelId[], id: PanelId) => arr.filter((x) => x !== id)
 
 export const useLayoutStore = create<LayoutState>((set) => ({
-  order: { left: ['scene'], right: ['inspector', 'assets'] },
-  collapsed: { scene: false, inspector: false, assets: false },
-  hidden: { scene: false, inspector: false, assets: false },
+  order: { left: ['scene'], right: ['inspector', 'assets', 'uv'] },
+  collapsed: { scene: false, inspector: false, assets: false, uv: true },
+  hidden: { scene: false, inspector: false, assets: false, uv: false },
 
   move: (id, side, beforeId) =>
     set((s) => {

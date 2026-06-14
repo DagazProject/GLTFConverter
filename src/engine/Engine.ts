@@ -10,11 +10,31 @@ import { TransformGizmo } from './gizmos/TransformGizmo.ts'
 import type { TransformMode } from './gizmos/TransformGizmo.ts'
 import { VertexEditor } from './subobject/VertexEditor.ts'
 import type { SubObjectMode } from './subobject/SubObjectMode.ts'
+import { LightHelperManager } from './helpers/LightHelpers.ts'
 
 export interface EngineCallbacks {
   onSelect?: (nodeId: NodeId | null) => void
   onTransformCommit?: (nodeId: NodeId, transform: Transform) => void
   onGeometryCommit?: (nodeId: NodeId) => void
+}
+
+export type ViewDir = 'front' | 'back' | 'left' | 'right' | 'top' | 'bottom' | 'iso'
+
+export interface ViewportSettings {
+  grid: boolean
+  axes: boolean
+  wireframe: boolean
+  fov: number
+}
+
+const VIEW_DIRS: Record<ViewDir, THREE.Vector3> = {
+  front: new THREE.Vector3(0, 0, 1),
+  back: new THREE.Vector3(0, 0, -1),
+  left: new THREE.Vector3(-1, 0, 0),
+  right: new THREE.Vector3(1, 0, 0),
+  top: new THREE.Vector3(0, 1, 0),
+  bottom: new THREE.Vector3(0, -1, 0),
+  iso: new THREE.Vector3(1, 0.8, 1).normalize(),
 }
 
 /** The imperative 3D core. Owns the renderer, scene and editor tooling. */
@@ -28,7 +48,13 @@ export class Engine {
   private gizmo: TransformGizmo
   private picking: PickingService
   private vertexEditor: VertexEditor
+  private lightHelpers: LightHelperManager
   private callbacks: EngineCallbacks = {}
+
+  private grid!: THREE.GridHelper
+  private axes!: THREE.AxesHelper
+  private wireMaterial = new THREE.MeshBasicMaterial({ wireframe: true, color: 0x9fb4d4 })
+  private settings: ViewportSettings = { grid: true, axes: true, wireframe: false, fov: 50 }
 
   private selectedId: NodeId | null = null
   private gizmoDragging = false
@@ -59,6 +85,7 @@ export class Engine {
     this.picking = new PickingService(this.renderer.domElement, this.viewport.camera)
     this.gizmo = new TransformGizmo(this.viewport.camera, this.renderer.domElement, this.scene)
     this.vertexEditor = new VertexEditor(this.viewport.camera, this.renderer.domElement)
+    this.lightHelpers = new LightHelperManager(this.scene)
 
     this.vertexEditor.onDragChange = (dragging) => {
       this.viewport.controls.enabled = !dragging
@@ -147,6 +174,7 @@ export class Engine {
     this.selection.select(obj ?? null)
     if (obj) this.gizmo.attach(obj)
     else this.gizmo.detach()
+    this.lightHelpers.attach(obj instanceof THREE.Light ? obj : null)
   }
 
   private refreshVertexEditor(): void {
@@ -176,11 +204,49 @@ export class Engine {
     const dir = new THREE.DirectionalLight(0xffffff, 2.0)
     dir.position.set(5, 8, 6)
     dir.name = '__editor_dir'
-    const grid = new THREE.GridHelper(40, 40, 0x2a3346, 0x1a2030)
-    grid.name = '__editor_grid'
-    const axes = new THREE.AxesHelper(2)
-    axes.name = '__editor_axes'
-    this.scene.add(hemi, dir, grid, axes)
+    this.grid = new THREE.GridHelper(40, 40, 0x2a3346, 0x1a2030)
+    this.grid.name = '__editor_grid'
+    this.axes = new THREE.AxesHelper(2)
+    this.axes.name = '__editor_axes'
+    this.scene.add(hemi, dir, this.grid, this.axes)
+  }
+
+  // --- Viewport settings & navigation ---
+
+  getSettings(): ViewportSettings {
+    return { ...this.settings }
+  }
+
+  setGridVisible(v: boolean): void {
+    this.settings.grid = v
+    this.grid.visible = v
+  }
+
+  setAxesVisible(v: boolean): void {
+    this.settings.axes = v
+    this.axes.visible = v
+  }
+
+  setWireframe(v: boolean): void {
+    this.settings.wireframe = v
+    // Scene-level override only swaps meshes; editor rig (lights/grid) is unaffected.
+    this.scene.overrideMaterial = v ? this.wireMaterial : null
+  }
+
+  setFov(fov: number): void {
+    this.settings.fov = fov
+    this.viewport.camera.fov = fov
+    this.viewport.camera.updateProjectionMatrix()
+  }
+
+  /** Snap the camera to a named orthographic-style view, keeping the orbit target. */
+  setView(dir: ViewDir): void {
+    const target = this.viewport.controls.target.clone()
+    const cam = this.viewport.camera
+    const dist = cam.position.distanceTo(target) || 8
+    cam.position.copy(target).addScaledVector(VIEW_DIRS[dir], dist)
+    cam.up.set(0, 1, 0)
+    this.viewport.controls.update()
   }
 
   private wireGizmo(): void {
@@ -217,6 +283,7 @@ export class Engine {
       this.raf = requestAnimationFrame(loop)
       this.viewport.update()
       this.selection.update()
+      this.lightHelpers.update()
       this.renderer.render(this.scene, this.viewport.camera)
     }
     loop()
@@ -224,6 +291,8 @@ export class Engine {
 
   dispose(): void {
     cancelAnimationFrame(this.raf)
+    this.lightHelpers.detach()
+    this.wireMaterial.dispose()
     this.gizmo.dispose()
     this.vertexEditor.dispose()
     this.selection.dispose()

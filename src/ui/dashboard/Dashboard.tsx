@@ -3,6 +3,7 @@ import { buildSceneRoot } from '../../application/export/buildSceneRoot.ts'
 import { exportScene } from '../../application/export/ExportService.ts'
 import { ProjectRepository } from '../../infrastructure/persistence/ProjectRepository.ts'
 import type { ProjectSummary } from '../../infrastructure/persistence/ProjectRepository.ts'
+import { confirmDialog } from '../../state/useConfirmStore.ts'
 import { useAppStore } from '../../state/useAppStore.ts'
 import { useEditorStore } from '../../state/useEditorStore.ts'
 import { useProjectStore } from '../../state/useProjectStore.ts'
@@ -49,7 +50,14 @@ export function Dashboard() {
     setRenaming(null)
   }
 
-  const deleteProject = async (id: string) => {
+  const deleteProject = async (id: string, name: string) => {
+    const ok = await confirmDialog({
+      title: 'Удалить проект?',
+      message: `«${name}» будет удалён без возможности восстановления.`,
+      confirmLabel: 'Удалить',
+      danger: true,
+    })
+    if (!ok) return
     await ProjectRepository.remove(id)
     await refresh()
   }
@@ -120,7 +128,7 @@ export function Dashboard() {
                 <button className="mini" title="Переименовать" onClick={() => setRenaming(p.id)}>
                   ✎
                 </button>
-                <button className="mini" title="Удалить" onClick={() => void deleteProject(p.id)}>
+                <button className="mini" title="Удалить" onClick={() => void deleteProject(p.id, p.name)}>
                   <Icon name="trash" size={14} />
                 </button>
               </div>

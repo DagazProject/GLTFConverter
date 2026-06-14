@@ -12,6 +12,7 @@ import type { LightType } from '../../domain/nodes/lights.ts'
 import type { SceneFragment } from '../../domain/project/SceneFragment.ts'
 import { ProjectRepository } from '../../infrastructure/persistence/ProjectRepository.ts'
 import type { ProjectSummary } from '../../infrastructure/persistence/ProjectRepository.ts'
+import { confirmDialog } from '../../state/useConfirmStore.ts'
 import { useAppStore } from '../../state/useAppStore.ts'
 import { useEditorStore } from '../../state/useEditorStore.ts'
 import { useEngineStore } from '../../state/useEngineStore.ts'
@@ -27,14 +28,17 @@ const PANELS: { id: PanelId; label: string }[] = [
   { id: 'scene', label: 'Сцена' },
   { id: 'inspector', label: 'Инспектор' },
   { id: 'assets', label: 'Материалы и текстуры' },
+  { id: 'uv', label: 'UV-развёртка' },
 ]
 
 export function MenuBar() {
   const [openMenu, setOpenMenu] = useState<string | null>(null)
   const [projects, setProjects] = useState<ProjectSummary[]>([])
+  const [editingName, setEditingName] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const project = useProjectStore((s) => s.project)
+  const dirty = useProjectStore((s) => s.dirty)
   const setProjectName = useProjectStore((s) => s.setProjectName)
   const setProject = useProjectStore((s) => s.setProject)
   const newProject = useProjectStore((s) => s.newProject)
@@ -122,9 +126,29 @@ export function MenuBar() {
     }
   }
   const deleteProject = async () => {
+    const ok = await confirmDialog({
+      title: 'Удалить проект?',
+      message: `«${project.meta.name}» будет удалён без возможности восстановления.`,
+      confirmLabel: 'Удалить',
+      danger: true,
+    })
+    if (!ok) return
     await ProjectRepository.remove(project.meta.id)
     await refreshProjects()
     setStatus('Проект удалён')
+  }
+
+  const newProjectGuarded = async () => {
+    if (dirty) {
+      const ok = await confirmDialog({
+        title: 'Создать новый проект?',
+        message: 'Текущая история изменений будет очищена.',
+        confirmLabel: 'Создать',
+      })
+      if (!ok) return
+    }
+    select(null)
+    newProject()
   }
 
   const withUndoCache = (fn: () => void) => () => {
@@ -160,7 +184,7 @@ export function MenuBar() {
       >
         <Item label="Все проекты…" onClick={() => setView('dashboard')} />
         <Separator />
-        <Item label="Новый" shortcut="Ctrl+N" onClick={() => { select(null); newProject() }} />
+        <Item label="Новый" shortcut="Ctrl+N" onClick={() => void newProjectGuarded()} />
         <SubMenu label="Открыть">
           {projects.length === 0 && <Item label="(пусто)" disabled onClick={() => {}} />}
           {projects.map((p) => (
@@ -250,13 +274,38 @@ export function MenuBar() {
         ))}
       </Menu>
 
+      <div className="project-title">
+        {editingName ? (
+          <input
+            autoFocus
+            defaultValue={project.meta.name}
+            onBlur={(e) => {
+              setProjectName(e.target.value.trim() || project.meta.name)
+              setEditingName(false)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+              if (e.key === 'Escape') setEditingName(false)
+            }}
+          />
+        ) : (
+          <span
+            className="name"
+            title="Двойной клик — переименовать"
+            onDoubleClick={() => setEditingName(true)}
+          >
+            {project.meta.name}
+          </span>
+        )}
+        <span
+          className={`save-dot ${dirty ? 'dirty' : 'saved'}`}
+          title={dirty ? 'Есть несохранённые изменения' : 'Сохранено'}
+        >
+          {dirty ? '● не сохранено' : '✓ сохранено'}
+        </span>
+      </div>
+
       <span className="spacer" />
-      <input
-        className="project-name"
-        value={project.meta.name}
-        onChange={(e) => setProjectName(e.target.value)}
-        title="Имя проекта"
-      />
       <span className="status">{busy ? '⏳ ' : ''}{status}</span>
     </div>
   )

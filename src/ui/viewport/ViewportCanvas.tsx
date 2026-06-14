@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { Engine } from '../../engine/Engine.ts'
+import { ViewportOverlay } from './ViewportOverlay.tsx'
 import { isMeshNode } from '../../domain/nodes/SceneNode.ts'
 import { useEditorStore } from '../../state/useEditorStore.ts'
 import { useEngineStore } from '../../state/useEngineStore.ts'
@@ -61,5 +62,9 @@ export function ViewportCanvas() {
   useEffect(() => engine?.setTransformMode(transformMode), [transformMode, engine])
   useEffect(() => engine?.setSubObjectMode(subObjectMode), [subObjectMode, engine])
 
-  return <div className="viewport" ref={containerRef} />
+  return (
+    <div className="viewport" ref={containerRef}>
+      <ViewportOverlay />
+    </div>
+  )
 }

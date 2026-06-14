@@ -4,6 +4,7 @@ import { useAppStore } from '../state/useAppStore.ts'
 import { useEditorStore } from '../state/useEditorStore.ts'
 import { useEngineStore } from '../state/useEngineStore.ts'
 import { useProjectStore } from '../state/useProjectStore.ts'
+import { ConfirmDialog } from './components/ConfirmDialog.tsx'
 import { Dashboard } from './dashboard/Dashboard.tsx'
 import { EditorLayout } from './layout/EditorLayout.tsx'
 import { saveCurrentProject } from './saveProject.ts'
@@ -84,5 +85,10 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  return view === 'dashboard' ? <Dashboard /> : <EditorLayout />
+  return (
+    <>
+      {view === 'dashboard' ? <Dashboard /> : <EditorLayout />}
+      <ConfirmDialog />
+    </>
+  )
 }

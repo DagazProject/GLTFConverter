@@ -6,6 +6,7 @@ import type { IconName } from '../icons/Icon.tsx'
 import { SceneTree } from '../panels/SceneTree.tsx'
 import { Inspector } from '../panels/Inspector/Inspector.tsx'
 import { AssetsPanel } from '../panels/AssetsPanel.tsx'
+import { UVEditor } from '../panels/UVEditor.tsx'
 
 interface PanelDef {
   title: string
@@ -17,6 +18,7 @@ const REGISTRY: Record<PanelId, PanelDef> = {
   scene: { title: 'Сцена', icon: 'group', render: () => <SceneTree /> },
   inspector: { title: 'Инспектор', icon: 'object', render: () => <Inspector /> },
   assets: { title: 'Материалы и текстуры', icon: 'material', render: () => <AssetsPanel /> },
+  uv: { title: 'UV-развёртка', icon: 'image', render: () => <UVEditor /> },
 }
 
 export function PanelHost({ side }: { side: Side }) {
