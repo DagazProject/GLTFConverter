@@ -1,6 +1,7 @@
+import { useState } from 'react'
 import type { MaterialAsset, TextureSlot } from '../../../domain/assets/MaterialAsset.ts'
 import { TEXTURE_SLOTS } from '../../../domain/assets/MaterialAsset.ts'
-import { MATERIAL_PRESETS } from '../../../domain/assets/materialPresets.ts'
+import { MaterialPresetPicker } from './MaterialPresetPicker.tsx'
 import { newAssetId } from '../../../domain/scene/ids.ts'
 import type { AssetId } from '../../../domain/scene/ids.ts'
 import { readFileAsDataUrl } from '../../../infrastructure/files/fileRead.ts'
@@ -11,6 +12,7 @@ const COLOR_SLOTS = new Set<TextureSlot>(['map', 'emissiveMap'])
 
 /** Full editor for a single MaterialAsset, reused by the inspector and assets panel. */
 export function MaterialCard({ material }: { material: MaterialAsset }) {
+  const [showPresets, setShowPresets] = useState(false)
   const update = useProjectStore((s) => s.updateMaterial)
   const addTexture = useProjectStore((s) => s.addTexture)
   const setMaterialTexture = useProjectStore((s) => s.setMaterialTexture)
@@ -37,23 +39,14 @@ export function MaterialCard({ material }: { material: MaterialAsset }) {
     <div className="material-card">
       <div className="field">
         <label>Пресет</label>
-        <select
-          value=""
-          title="Применить пресет материала"
-          onChange={(e) => {
-            const preset = MATERIAL_PRESETS.find((p) => p.id === e.target.value)
-            if (preset) update(material.id, preset.props)
-            e.target.value = ''
-          }}
-        >
-          <option value="">— выбрать —</option>
-          {MATERIAL_PRESETS.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+        <button onClick={() => setShowPresets(true)}>Выбрать пресет…</button>
       </div>
+      {showPresets && (
+        <MaterialPresetPicker
+          onApply={(preset) => update(material.id, preset.props)}
+          onClose={() => setShowPresets(false)}
+        />
+      )}
       <div className="field">
         <label>Имя</label>
         <input

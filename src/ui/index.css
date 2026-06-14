@@ -720,6 +720,46 @@ button.mini {
   gap: 8px;
 }
 
+/* Material preset picker */
+.preset-modal {
+  width: 560px;
+  max-width: 92vw;
+}
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 10px;
+  margin: 6px 0 14px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.preset-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.preset-card:hover {
+  border-color: var(--accent);
+}
+.preset-card img {
+  width: 84px;
+  height: 84px;
+  border-radius: 6px;
+  background: #0e1118;
+}
+.preset-card span {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+  line-height: 1.2;
+}
+
 /* Menu bar centered project title */
 .menubar .project-title {
   display: flex;
