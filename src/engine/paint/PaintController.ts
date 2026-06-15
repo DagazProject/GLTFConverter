@@ -11,23 +11,24 @@ export interface PaintConfig {
 const TEX = 1024
 
 interface Target {
-  material: THREE.MeshStandardMaterial
+  mesh: THREE.Mesh
   canvas: HTMLCanvasElement
   ctx: CanvasRenderingContext2D
   texture: THREE.CanvasTexture
 }
 
 /**
- * Texture paint brush: drag over a mesh to paint onto its base-colour map.
- * If the material has no paintable map yet, a canvas-backed one is created
- * (seeded from the existing map or the base colour).
+ * Texture paint brush. Paints onto a per-mesh canvas-backed base-colour map via
+ * the hit UV; the brush footprint is scaled by the local UV density so it
+ * matches the world-space cursor. The canvas persists per mesh (keyed by uuid)
+ * and is re-bound after material rebuilds, so strokes accumulate.
  */
 export class PaintController {
   private raycaster = new THREE.Raycaster()
   private pointer = new THREE.Vector2()
   private cursor: THREE.Mesh
   private painting = false
-  private target: Target | null = null
+  private targets = new Map<string, Target>()
   private stroke: THREE.Mesh | null = null
 
   config: PaintConfig = { active: false, color: { r: 1, g: 0, b: 0 }, radius: 0.5, strength: 0.6 }
@@ -75,12 +76,23 @@ export class PaintController {
     return this.raycaster.intersectObject(this.root, true).find((h) => (h.object as THREE.Mesh).isMesh) ?? null
   }
 
-  /** Build (or reuse) a paintable canvas map on the mesh's first material. */
-  private ensureTarget(mesh: THREE.Mesh): Target | null {
+  private firstMaterial(mesh: THREE.Mesh): THREE.MeshStandardMaterial | null {
     const mat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.MeshStandardMaterial
-    if (!mat || !('map' in mat)) return null
-    if (this.target && this.target.material === mat && mat.map === this.target.texture) {
-      return this.target
+    return mat && 'map' in mat ? mat : null
+  }
+
+  /** Reuse the mesh's paint canvas (re-binding after material rebuilds) or create it. */
+  private ensureTarget(mesh: THREE.Mesh): Target | null {
+    const mat = this.firstMaterial(mesh)
+    if (!mat) return null
+    const existing = this.targets.get(mesh.uuid)
+    if (existing) {
+      if (mat.map !== existing.texture) {
+        mat.map = existing.texture
+        mat.color.setRGB(1, 1, 1)
+        mat.needsUpdate = true
+      }
+      return existing
     }
     const canvas = document.createElement('canvas')
     canvas.width = canvas.height = TEX
@@ -98,10 +110,16 @@ export class PaintController {
     texture.colorSpace = THREE.SRGBColorSpace
     texture.flipY = true
     mat.map = texture
-    mat.color.setRGB(1, 1, 1) // let the texture carry the colour
+    mat.color.setRGB(1, 1, 1)
     mat.needsUpdate = true
-    this.target = { material: mat, canvas, ctx, texture }
-    return this.target
+    const target: Target = { mesh, canvas, ctx, texture }
+    this.targets.set(mesh.uuid, target)
+    return target
+  }
+
+  /** Live paint texture for a mesh, registered as a factory override on commit. */
+  textureFor(mesh: THREE.Mesh): THREE.Texture | null {
+    return this.targets.get(mesh.uuid)?.texture ?? null
   }
 
   private onDown(e: PointerEvent): void {
@@ -113,7 +131,7 @@ export class PaintController {
     this.painting = true
     this.stroke = hit.object as THREE.Mesh
     this.onDragChange?.(true)
-    this.stamp(target, hit.uv)
+    this.stamp(target, hit)
   }
 
   private onMove(e: PointerEvent): void {
@@ -126,23 +144,48 @@ export class PaintController {
     } else {
       this.cursor.visible = false
     }
-    if (this.painting && hit?.uv && this.target) this.stamp(this.target, hit.uv)
+    if (this.painting && hit?.uv) {
+      const target = this.targets.get((hit.object as THREE.Mesh).uuid)
+      if (target) this.stamp(target, hit)
+    }
   }
 
   private onUp(): void {
     if (!this.painting) return
     this.painting = false
     this.onDragChange?.(false)
-    if (this.stroke && this.target) {
-      this.onCommit?.(this.stroke, this.target.canvas.toDataURL('image/png'))
+    if (this.stroke) {
+      const t = this.targets.get(this.stroke.uuid)
+      if (t) this.onCommit?.(this.stroke, t.canvas.toDataURL('image/png'))
     }
     this.stroke = null
   }
 
-  private stamp(target: Target, uv: THREE.Vector2): void {
+  /** Brush radius in texels, derived from the world radius and local UV density. */
+  private texelRadius(mesh: THREE.Mesh, hit: THREE.Intersection): number {
+    const face = hit.face
+    const geo = mesh.geometry
+    const pos = geo.getAttribute('position') as THREE.BufferAttribute | undefined
+    const uv = geo.getAttribute('uv') as THREE.BufferAttribute | undefined
+    if (face && pos && uv) {
+      const wa = mesh.localToWorld(new THREE.Vector3().fromBufferAttribute(pos, face.a))
+      const wb = mesh.localToWorld(new THREE.Vector3().fromBufferAttribute(pos, face.b))
+      const ua = new THREE.Vector2().fromBufferAttribute(uv, face.a)
+      const ub = new THREE.Vector2().fromBufferAttribute(uv, face.b)
+      const wlen = wa.distanceTo(wb)
+      const ulen = ua.distanceTo(ub)
+      if (wlen > 1e-6 && ulen > 1e-6) {
+        return THREE.MathUtils.clamp((this.config.radius * ulen) / wlen * TEX, 2, TEX)
+      }
+    }
+    return Math.max(4, this.config.radius * 160)
+  }
+
+  private stamp(target: Target, hit: THREE.Intersection): void {
+    const uv = hit.uv!
     const px = uv.x * TEX
     const py = (1 - uv.y) * TEX
-    const r = Math.max(4, this.config.radius * 160)
+    const r = this.texelRadius(hit.object as THREE.Mesh, hit)
     const c = this.config.color
     const rgb = `${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)}`
     const grd = target.ctx.createRadialGradient(px, py, 0, px, py, r)
@@ -162,6 +205,8 @@ export class PaintController {
     this.scene.remove(this.cursor)
     this.cursor.geometry.dispose()
     ;(this.cursor.material as THREE.Material).dispose()
+    for (const t of this.targets.values()) t.texture.dispose()
+    this.targets.clear()
   }
 }
 

@@ -50,6 +50,8 @@ export function ViewportCanvas() {
           store.setMaterialTexture(matId, 'map', texId)
         }
         store.updateMaterial(matId, { color: { r: 1, g: 1, b: 1 }, vertexColors: false })
+        // Keep showing the live paint canvas (avoids async reload flicker).
+        instance.pinPaintTexture(id, matId)
       },
       onGeometryCommit: (id) => {
         const geo = instance.getMeshGeometry(id)

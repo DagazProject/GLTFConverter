@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { ViewHelper } from 'three/examples/jsm/helpers/ViewHelper.js'
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js'
 import type { CameraView, Project } from '../domain/project/Project.ts'
-import type { NodeId } from '../domain/scene/ids.ts'
+import type { AssetId, NodeId } from '../domain/scene/ids.ts'
 import type { Transform } from '../domain/scene/Transform.ts'
 import { SceneSynchronizer } from './SceneSynchronizer.ts'
 import { Viewport } from './Viewport.ts'
@@ -350,13 +350,24 @@ export class Engine {
     this.viewport.camera.updateProjectionMatrix()
   }
 
+  /** Reuse a mesh's live paint canvas for its material on rebuilds (no reload flicker). */
+  pinPaintTexture(nodeId: NodeId, materialId: AssetId): void {
+    const mesh = this.sync.object3dFor(nodeId)
+    const tex = mesh instanceof THREE.Mesh ? this.paint.textureFor(mesh) : null
+    if (tex) this.sync.factory.paintOverrides.set(materialId, tex)
+  }
+
   /** Configure the vertex paint brush. */
   setPaint(config: PaintConfig): void {
     this.paint.config = { ...config }
     this.paint.setActive(config.active)
-    // Paint and the transform gizmo shouldn't fight for the pointer/space.
-    if (config.active) this.gizmo.detach()
-    else this.refreshSelection()
+    // Paint and the transform handles shouldn't fight for the pointer/space.
+    if (config.active) {
+      this.gizmo.detach()
+      this.pivot.detach()
+    } else {
+      this.refreshSelection()
+    }
   }
 
   /** Grid snapping for the transform gizmo. */

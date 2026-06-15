@@ -38,6 +38,9 @@ const toBufferAttribute = (data: BufferData): THREE.BufferAttribute =>
 export class AssetFactory {
   private geometries = new Map<AssetId, THREE.BufferGeometry>()
   private textures = new Map<AssetId, THREE.Texture>()
+  /** Live paint canvas textures, keyed by material id, used in place of the
+   * asset's (async-loading) map so painting shows immediately without flicker. */
+  readonly paintOverrides = new Map<AssetId, THREE.Texture>()
 
   constructor(private registry: AssetRegistry) {}
 
@@ -68,7 +71,14 @@ export class AssetFactory {
   buildMaterial(id: AssetId): THREE.Material {
     const asset = this.registry.materials[id]
     if (!asset) return new THREE.MeshStandardMaterial({ color: 0xcccccc })
-    return this.toThreeMaterial(asset)
+    const mat = this.toThreeMaterial(asset)
+    const override = this.paintOverrides.get(id)
+    if (override && 'map' in mat) {
+      ;(mat as THREE.MeshStandardMaterial).map = override
+      ;(mat as THREE.MeshStandardMaterial).color.setRGB(1, 1, 1)
+      mat.needsUpdate = true
+    }
+    return mat
   }
 
   buildMaterials(ids: AssetId[]): THREE.Material | THREE.Material[] {
