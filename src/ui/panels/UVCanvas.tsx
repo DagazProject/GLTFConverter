@@ -46,6 +46,7 @@ export function UVCanvas() {
   const showGridRef = useRef(true)
 
   const uvRef = useRef<number[]>([])
+  const geomIdRef = useRef<string | undefined>(undefined)
   const selRef = useRef<Set<number>>(new Set())
   const hoverRef = useRef<Hover>(null)
   const viewRef = useRef<View>({ scale: 256, ox: 24, oy: 24 })
@@ -62,9 +63,18 @@ export function UVCanvas() {
 
   useEffect(() => {
     uvRef.current = geometry?.attributes.uv ? [...geometry.attributes.uv.array] : []
-    selRef.current.clear()
-    hoverRef.current = null
-    fit()
+    // Only reset selection / view when a *different* geometry is shown — not when
+    // our own UV edits create a new geometry object (which would drop selection).
+    if (geometry?.id !== geomIdRef.current) {
+      geomIdRef.current = geometry?.id
+      selRef.current.clear()
+      hoverRef.current = null
+      // Fit next frame, once the canvas has its real size.
+      requestAnimationFrame(() => {
+        fit()
+        draw()
+      })
+    }
     draw()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [geometry])
