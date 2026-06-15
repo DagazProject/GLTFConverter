@@ -24,7 +24,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   selectedId: null,
   transformMode: 'translate',
   subObjectMode: 'object',
-  status: 'Готово',
+  status: '',
   busy: false,
   uvSelection: [],
 
