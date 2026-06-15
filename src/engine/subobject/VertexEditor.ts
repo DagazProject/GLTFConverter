@@ -13,6 +13,8 @@ const EDGE_PX = 7
  */
 export class VertexEditor {
   private points: THREE.Points | null = null
+  private hoverLine: THREE.LineSegments | null = null
+  private hoverFace: THREE.Mesh | null = null
   private mesh: THREE.Mesh | null = null
   private mode: SubObjectMode = 'vertex'
   private selection = new Set<number>()
@@ -71,18 +73,50 @@ export class VertexEditor {
     mesh.add(this.points)
     this.refreshColors()
 
+    // Hover highlights (child of mesh -> local coords, follow transform).
+    this.hoverLine = new THREE.LineSegments(
+      new THREE.BufferGeometry().setAttribute(
+        'position',
+        new THREE.BufferAttribute(new Float32Array(6), 3),
+      ),
+      new THREE.LineBasicMaterial({ color: 0xff8a3d, depthTest: false, linewidth: 2 }),
+    )
+    this.hoverLine.visible = false
+    this.hoverLine.renderOrder = 1000
+    mesh.add(this.hoverLine)
+
+    this.hoverFace = new THREE.Mesh(
+      new THREE.BufferGeometry().setAttribute(
+        'position',
+        new THREE.BufferAttribute(new Float32Array(9), 3),
+      ),
+      new THREE.MeshBasicMaterial({
+        color: 0xff8a3d,
+        transparent: true,
+        opacity: 0.35,
+        depthTest: false,
+        side: THREE.DoubleSide,
+      }),
+    )
+    this.hoverFace.visible = false
+    this.hoverFace.renderOrder = 1000
+    mesh.add(this.hoverFace)
+
     this.dom.addEventListener('pointerdown', this.downHandler)
     this.dom.addEventListener('pointermove', this.moveHandler)
     this.dom.addEventListener('pointerup', this.upHandler)
   }
 
   deactivate(): void {
-    if (this.points) {
-      this.points.parent?.remove(this.points)
-      this.points.geometry.dispose()
-      ;(this.points.material as THREE.Material).dispose()
-      this.points = null
+    for (const o of [this.points, this.hoverLine, this.hoverFace]) {
+      if (!o) continue
+      o.parent?.remove(o)
+      o.geometry.dispose()
+      ;(o.material as THREE.Material).dispose()
     }
+    this.points = null
+    this.hoverLine = null
+    this.hoverFace = null
     this.dom.removeEventListener('pointerdown', this.downHandler)
     this.dom.removeEventListener('pointermove', this.moveHandler)
     this.dom.removeEventListener('pointerup', this.upHandler)
@@ -221,8 +255,49 @@ export class VertexEditor {
     this.onDragChange?.(true)
   }
 
+  private updateHover(e: PointerEvent): void {
+    if (!this.mesh) return
+    const [px, py] = this.localPx(e)
+    const attr = this.mesh.geometry.getAttribute('position') as THREE.BufferAttribute
+
+    let edge: [number, number] | null = null
+    let face: [number, number, number] | null = null
+    if (this.mode === 'edge') edge = this.edgeAt(px, py)
+    else if (this.mode === 'polygon') {
+      this.setRay(e)
+      const hit = this.raycaster.intersectObject(this.mesh, false)[0]
+      if (hit?.face) face = [hit.face.a, hit.face.b, hit.face.c]
+    }
+
+    if (this.hoverLine) {
+      this.hoverLine.visible = Boolean(edge)
+      if (edge) {
+        const p = this.hoverLine.geometry.getAttribute('position') as THREE.BufferAttribute
+        p.setXYZ(0, attr.getX(edge[0]), attr.getY(edge[0]), attr.getZ(edge[0]))
+        p.setXYZ(1, attr.getX(edge[1]), attr.getY(edge[1]), attr.getZ(edge[1]))
+        p.needsUpdate = true
+      }
+    }
+    if (this.hoverFace) {
+      this.hoverFace.visible = Boolean(face)
+      if (face) {
+        const p = this.hoverFace.geometry.getAttribute('position') as THREE.BufferAttribute
+        for (let k = 0; k < 3; k++) {
+          p.setXYZ(k, attr.getX(face[k]), attr.getY(face[k]), attr.getZ(face[k]))
+        }
+        p.needsUpdate = true
+      }
+    }
+  }
+
   private onPointerMove(e: PointerEvent): void {
-    if (!this.dragging || !this.mesh || !this.points) return
+    if (!this.mesh || !this.points) return
+    if (!this.dragging) {
+      this.updateHover(e)
+      return
+    }
+    if (this.hoverLine) this.hoverLine.visible = false
+    if (this.hoverFace) this.hoverFace.visible = false
     if (Math.hypot(e.clientX - this.downX, e.clientY - this.downY) > 2) this.moved = true
     this.setRay(e)
     const cur = new THREE.Vector3()
