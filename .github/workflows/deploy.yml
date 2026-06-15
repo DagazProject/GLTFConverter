@@ -14,16 +14,26 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install & build
         run: |
-          npm ci
+          # npm registry hiccups (ECONNRESET) are transient — retry with backoff.
+          npm config set fetch-retries 5
+          npm config set fetch-retry-mintimeout 20000
+          npm config set fetch-retry-maxtimeout 120000
+          ok=0
+          for i in 1 2 3; do
+            if npm ci; then ok=1; break; fi
+            echo "npm ci failed (attempt $i), retrying in 15s..."
+            sleep 15
+          done
+          [ "$ok" = 1 ] || { echo "npm ci failed after 3 attempts"; exit 1; }
           npm run build
 
       - name: Package build
