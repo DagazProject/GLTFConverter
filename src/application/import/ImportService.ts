@@ -1,6 +1,7 @@
 import type * as THREE from 'three'
 import type { SceneFragment } from '../../domain/project/SceneFragment.ts'
 import { normalizeObject3D } from './normalizeObject3D.ts'
+import { importArchive, isZipFile } from './loadArchive.ts'
 import {
   load3mf,
   loadCollada,
@@ -16,7 +17,7 @@ import {
 type Parser = (data: ArrayBuffer | string) => THREE.Object3D | Promise<THREE.Object3D>
 
 /** Extensions whose payload is text; everything else is read as ArrayBuffer. */
-const TEXT_FORMATS = new Set(['gltf', 'obj', 'dae', 'json'])
+const TEXT_FORMATS = new Set(['gltf', 'obj', 'dae', 'json', 'js'])
 
 const PARSERS: Record<string, Parser> = {
   gltf: loadGltf,
@@ -29,9 +30,11 @@ const PARSERS: Record<string, Parser> = {
   '3mf': load3mf,
   usdz: loadUsdz,
   json: loadLegacyJson,
+  // Legacy three.js JSON models are often shipped with a .js extension.
+  js: loadLegacyJson,
 }
 
-export const SUPPORTED_IMPORT_EXTENSIONS = Object.keys(PARSERS)
+export const SUPPORTED_IMPORT_EXTENSIONS = [...Object.keys(PARSERS), 'zip']
 
 export const importAccept = SUPPORTED_IMPORT_EXTENSIONS.map((e) => `.${e}`).join(',')
 
@@ -40,6 +43,7 @@ const extensionOf = (filename: string): string =>
 
 /** Parses a File into a domain SceneFragment ready to merge into a Project. */
 export const importFile = async (file: File): Promise<SceneFragment> => {
+  if (isZipFile(file)) return importArchive(file)
   const ext = extensionOf(file.name)
   const parser = PARSERS[ext]
   if (!parser) {
