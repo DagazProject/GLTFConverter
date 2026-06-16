@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { isMeshNode } from '../../domain/nodes/SceneNode.ts'
 import { useEditorStore } from '../../state/useEditorStore.ts'
 import { useProjectStore } from '../../state/useProjectStore.ts'
@@ -22,14 +22,17 @@ export function UVEditorModal({ onClose }: { onClose: () => void }) {
     return () => setUvSelection([])
   }, [setUvSelection])
 
-  // Escape closes; kept separate so an unstable onClose can't trigger the reset.
+  // Escape closes. onClose is read through a ref so the parent's fresh-arrow-per-
+  // render doesn't re-bind the listener on every re-render.
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') onCloseRef.current()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [])
 
   return (
     <div className="modal-backdrop" onClick={onClose}>

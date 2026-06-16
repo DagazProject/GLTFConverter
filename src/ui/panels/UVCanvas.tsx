@@ -70,8 +70,6 @@ export function UVCanvas() {
   const showTexRef = useRef(true)
   const showGridRef = useRef(true)
   const [lockAspect, setLockAspect] = useState(true)
-  const lockAspectRef = useRef(lockAspect)
-  lockAspectRef.current = lockAspect
 
   const uvRef = useRef<number[]>([])
   const geomIdRef = useRef<string | undefined>(undefined)
@@ -321,12 +319,14 @@ export function UVCanvas() {
     } else {
       // Scale about the anchor (opposite side stays fixed). Factor is relative to
       // the grab point, so f = 1 at pointer-down (no jump); crossing the anchor
-      // flips sign -> mirror. Corners keep aspect when lockAspect is on.
-      const denU = Math.abs(s.gu) > 1e-6 ? s.gu : s.gu < 0 ? -1e-6 : 1e-6
-      const denV = Math.abs(s.gv) > 1e-6 ? s.gv : s.gv < 0 ? -1e-6 : 1e-6
-      let fu = s.sclU ? (pu - s.au) / denU : 1
-      let fv = s.sclV ? (pv - s.av) / denV : 1
-      if (s.sclU && s.sclV && lockAspectRef.current) {
+      // flips sign -> mirror. Only scale an axis with real extent — a zero-extent
+      // grab offset (selection along an axis-aligned UV edge) would blow up.
+      const EXT = 1e-4
+      const okU = s.sclU && Math.abs(s.gu) > EXT
+      const okV = s.sclV && Math.abs(s.gv) > EXT
+      let fu = okU ? (pu - s.au) / s.gu : 1
+      let fv = okV ? (pv - s.av) / s.gv : 1
+      if (lockAspect && okU && okV) {
         const f = Math.max(Math.abs(fu), Math.abs(fv))
         fu = fu < 0 ? -f : f
         fv = fv < 0 ? -f : f
@@ -658,20 +658,11 @@ export function UVCanvas() {
   const commit = () => {
     if (!geometry) return
     setGeometryUV(geometry.id, [...uvRef.current])
-    // Update the live three geometry's UVs in place rather than invalidating the
-    // whole cache — a full rebuild reloads the model and drops the preview's
-    // highlighted selection. UV vertex count never changes, so set() is safe.
+    // Update the live geometry's UVs in place rather than invalidating the whole
+    // cache — a full rebuild reloads the model and drops the preview's selection.
     const engine = useEngineStore.getState().engine
-    const liveGeo = mesh ? engine?.getMeshGeometry(mesh.id) : null
-    const attr = liveGeo?.getAttribute('uv') as
-      | { array: Float32Array; needsUpdate: boolean }
-      | undefined
-    if (attr && attr.array.length === uvRef.current.length) {
-      attr.array.set(uvRef.current)
-      attr.needsUpdate = true
-    } else {
-      engine?.invalidateGeometryCache()
-    }
+    const updated = mesh ? engine?.updateGeometryUV(mesh.id, uvRef.current) : false
+    if (!updated) engine?.invalidateGeometryCache()
   }
 
   const transformSelected = (fn: (u: number, v: number, cu: number, cv: number) => [number, number]) => {

@@ -273,6 +273,20 @@ export class Engine {
     return obj && (obj as THREE.Mesh).isMesh ? (obj as THREE.Mesh).geometry : null
   }
 
+  /**
+   * Update a node's live UV attribute in place (no rebuild) for interactive UV
+   * editing. Returns false if it couldn't (no mesh / no uv / size changed) so the
+   * caller can fall back to a full cache invalidate.
+   */
+  updateGeometryUV(id: NodeId, uv: number[]): boolean {
+    const geo = this.getMeshGeometry(id)
+    const attr = geo?.getAttribute('uv') as THREE.BufferAttribute | undefined
+    if (!attr || attr.array.length !== uv.length) return false
+    ;(attr.array as Float32Array).set(uv)
+    attr.needsUpdate = true
+    return true
+  }
+
   private refreshSelection(): void {
     if (this.subObjectMode !== 'object') return
     const obj = this.selectedId ? this.sync.object3dFor(this.selectedId) : null

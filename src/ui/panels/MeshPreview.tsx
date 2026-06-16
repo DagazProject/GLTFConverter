@@ -153,10 +153,11 @@ export function MeshPreview({ node, showChecker }: { node: MeshNode; showChecker
       selPointsRef.current = null
       geoRef.current = null
     }
-    // Rebuild the preview only when the mesh or checker changes — NOT on every UV
-    // edit (handled in place below), so the model doesn't reload mid-edit.
+    // Rebuild the preview when the mesh, its geometry, or the checker changes —
+    // NOT on every UV edit (handled in place below), so the model doesn't reload
+    // mid-edit. geometryId (unlike the geometry object) is stable across edits.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [node.id, showChecker])
+  }, [node.id, node.geometryId, showChecker])
 
   // Apply geometry edits (UVs, vertex moves) to the live preview in place.
   useEffect(() => {
