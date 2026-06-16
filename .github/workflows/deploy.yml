@@ -1,0 +1,84 @@
+name: Deploy to Timeweb (blue-green)
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# Never run two deploys at once — the symlink swap must be serialized.
+concurrency:
+  group: deploy-timeweb
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install & build
+        run: |
+          # npm registry hiccups (ECONNRESET) are transient — retry with backoff.
+          npm config set fetch-retries 5
+          npm config set fetch-retry-mintimeout 20000
+          npm config set fetch-retry-maxtimeout 120000
+          ok=0
+          for i in 1 2 3; do
+            if npm ci; then ok=1; break; fi
+            echo "npm ci failed (attempt $i), retrying in 15s..."
+            sleep 15
+          done
+          [ "$ok" = 1 ] || { echo "npm ci failed after 3 attempts"; exit 1; }
+          npm run build
+
+      - name: Package build
+        run: tar -czf app.tar.gz -C dist .
+
+      - name: Upload package to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.TIMEWEB_SSH_HOST }}
+          username: ${{ secrets.TIMEWEB_SSH_USER }}
+          key: ${{ secrets.TIMEWEB_SSH_KEY }}
+          port: ${{ secrets.TIMEWEB_SSH_PORT || 22 }}
+          source: app.tar.gz
+          target: ${{ secrets.TIMEWEB_DEPLOY_PATH }}/incoming
+
+      - name: Blue-green swap
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.TIMEWEB_SSH_HOST }}
+          username: ${{ secrets.TIMEWEB_SSH_USER }}
+          key: ${{ secrets.TIMEWEB_SSH_KEY }}
+          port: ${{ secrets.TIMEWEB_SSH_PORT || 22 }}
+          envs: DEPLOY_PATH
+          script: |
+            set -euo pipefail
+            BASE="$DEPLOY_PATH"
+            mkdir -p "$BASE/releases" "$BASE/incoming"
+            CUR="$BASE/current"
+
+            # Choose the inactive colour.
+            prev="$(readlink -f "$CUR" 2>/dev/null || true)"
+            case "$prev" in
+              */blue) color=green ;;
+              *)      color=blue ;;
+            esac
+            TARGET="$BASE/releases/$color"
+
+            # Unpack the new release into the inactive slot.
+            rm -rf "$TARGET"
+            mkdir -p "$TARGET"
+            tar -xzf "$BASE/incoming/app.tar.gz" -C "$TARGET"
+            rm -f "$BASE/incoming/app.tar.gz"
+
+            # Atomic switch + keep the old slot for instant rollback.
+            ln -sfn "$TARGET" "$CUR"
+            echo "Deployed -> $color ($TARGET)"
+        env:
+          DEPLOY_PATH: ${{ secrets.TIMEWEB_DEPLOY_PATH }}
