@@ -42,6 +42,7 @@ export function MeshPreview({ node, showChecker }: { node: MeshNode; showChecker
 
   const sceneRef = useRef<THREE.Scene | null>(null)
   const posRef = useRef<number[]>([])
+  const geoRef = useRef<THREE.BufferGeometry | null>(null)
   const selPointsRef = useRef<THREE.Points | null>(null)
 
   useEffect(() => {
@@ -66,6 +67,7 @@ export function MeshPreview({ node, showChecker }: { node: MeshNode; showChecker
 
     const factory = new AssetFactory(assets)
     const geo = factory.getGeometry(node.geometryId)
+    geoRef.current = geo
     const checker = showChecker ? makeCheckerTexture() : null
     const material = checker
       ? new THREE.MeshStandardMaterial({ map: checker, roughness: 0.85, metalness: 0 })
@@ -149,9 +151,33 @@ export function MeshPreview({ node, showChecker }: { node: MeshNode; showChecker
       renderer.domElement.remove()
       sceneRef.current = null
       selPointsRef.current = null
+      geoRef.current = null
     }
+    // Rebuild the preview when the mesh, its geometry, or the checker changes —
+    // NOT on every UV edit (handled in place below), so the model doesn't reload
+    // mid-edit. geometryId (unlike the geometry object) is stable across edits.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [node.id, geometry, showChecker])
+  }, [node.id, node.geometryId, showChecker])
+
+  // Apply geometry edits (UVs, vertex moves) to the live preview in place.
+  useEffect(() => {
+    const geo = geoRef.current
+    if (!geo || !geometry) return
+    const apply = (name: string, src: ArrayLike<number> | undefined) => {
+      if (!src) return
+      const a = geo.getAttribute(name) as THREE.BufferAttribute | undefined
+      if (a && a.array.length === src.length) {
+        ;(a.array as Float32Array).set(src as ArrayLike<number>)
+        a.needsUpdate = true
+      }
+    }
+    apply('position', geometry.attributes.position?.array)
+    apply('normal', geometry.attributes.normal?.array)
+    apply('uv', geometry.attributes.uv?.array)
+    geo.computeBoundingSphere()
+    const posAttr = geo.getAttribute('position')
+    posRef.current = posAttr ? Array.from(posAttr.array as ArrayLike<number>) : []
+  }, [geometry])
 
   // Highlight the selected UV vertices on the model.
   useEffect(() => {

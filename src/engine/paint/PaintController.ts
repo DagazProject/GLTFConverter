@@ -3,25 +3,52 @@ import type { RGB } from '../../domain/math/types.ts'
 
 export interface PaintConfig {
   active: boolean
+  /** Lay down colour, or restore the original texture under the brush. */
+  mode: 'paint' | 'erase'
   color: RGB
   radius: number
   strength: number
+  /** Brush edge sharpness 0..1 (0 = fully soft falloff, 1 = near-hard edge). */
+  hardness: number
 }
 
 const TEX = 1024
+/** Texels to bleed painted colour past UV-island edges to hide seams. */
+const DILATE_PASSES = 4
 
 interface Target {
   mesh: THREE.Mesh
-  canvas: HTMLCanvasElement
-  ctx: CanvasRenderingContext2D
+  matIndex: number
+  /** Seed image (texture/colour before any strokes) — the erase target. */
+  original: CanvasRenderingContext2D
+  /** Baked result of all committed strokes. */
+  base: CanvasRenderingContext2D
+  /** Mask of the in-progress stroke (flattened onto base at strength on commit). */
+  stroke: CanvasRenderingContext2D
+  /** Union of every stroke's footprint, used to drive seam dilation. */
+  coverage: CanvasRenderingContext2D
+  /** Canvas bound to the texture; base + the live stroke composited each frame. */
+  display: CanvasRenderingContext2D
   texture: THREE.CanvasTexture
 }
+
+const makeCtx = (): CanvasRenderingContext2D => {
+  const c = document.createElement('canvas')
+  c.width = c.height = TEX
+  return c.getContext('2d')!
+}
+
+let tmpCtx: CanvasRenderingContext2D | null = null
+const getTmp = (): CanvasRenderingContext2D => (tmpCtx ??= makeCtx())
 
 /**
  * Texture paint brush. Paints onto a per-mesh canvas-backed base-colour map via
  * the hit UV; the brush footprint is scaled by the local UV density so it
- * matches the world-space cursor. The canvas persists per mesh (keyed by uuid)
- * and is re-bound after material rebuilds, so strokes accumulate.
+ * matches the world-space cursor. The canvas persists per mesh+material (keyed
+ * by uuid:slot) and is re-bound after material rebuilds, so strokes accumulate.
+ *
+ * Each stroke is drawn to its own layer and flattened once at `strength`, so a
+ * slow stroke no longer darkens where dabs overlap.
  */
 export class PaintController {
   private raycaster = new THREE.Raycaster()
@@ -29,12 +56,19 @@ export class PaintController {
   private cursor: THREE.Mesh
   private painting = false
   private targets = new Map<string, Target>()
-  private stroke: THREE.Mesh | null = null
+  private strokeTarget: Target | null = null
   private lastPx: { x: number; y: number } | null = null
 
-  config: PaintConfig = { active: false, color: { r: 1, g: 0, b: 0 }, radius: 0.5, strength: 0.6 }
+  config: PaintConfig = {
+    active: false,
+    mode: 'paint',
+    color: { r: 1, g: 0, b: 0 },
+    radius: 0.5,
+    strength: 0.6,
+    hardness: 0,
+  }
   onDragChange?: (dragging: boolean) => void
-  onCommit?: (mesh: THREE.Mesh, dataUrl: string) => void
+  onCommit?: (mesh: THREE.Mesh, dataUrl: string, matIndex: number) => void
 
   private down = (e: PointerEvent) => this.onDown(e)
   private move = (e: PointerEvent) => this.onMove(e)
@@ -77,16 +111,29 @@ export class PaintController {
     return this.raycaster.intersectObject(this.root, true).find((h) => (h.object as THREE.Mesh).isMesh) ?? null
   }
 
-  private firstMaterial(mesh: THREE.Mesh): THREE.MeshStandardMaterial | null {
-    const mat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.MeshStandardMaterial
+  /** Material index of the triangle under the hit (0 unless geometry is grouped). */
+  private materialIndexAt(mesh: THREE.Mesh, faceIndex: number | null | undefined): number {
+    const groups = mesh.geometry.groups
+    if (faceIndex == null || groups.length === 0) return 0
+    const i = faceIndex * 3
+    for (const g of groups) {
+      if (i >= g.start && i < g.start + g.count) return g.materialIndex ?? 0
+    }
+    return 0
+  }
+
+  private materialAt(mesh: THREE.Mesh, matIndex: number): THREE.MeshStandardMaterial | null {
+    const m = Array.isArray(mesh.material) ? mesh.material[matIndex] : mesh.material
+    const mat = m as THREE.MeshStandardMaterial
     return mat && 'map' in mat ? mat : null
   }
 
-  /** Reuse the mesh's paint canvas (re-binding after material rebuilds) or create it. */
-  private ensureTarget(mesh: THREE.Mesh): Target | null {
-    const mat = this.firstMaterial(mesh)
+  /** Reuse the mesh+slot paint canvas (re-binding after material rebuilds) or create it. */
+  private ensureTarget(mesh: THREE.Mesh, matIndex: number): Target | null {
+    const mat = this.materialAt(mesh, matIndex)
     if (!mat) return null
-    const existing = this.targets.get(mesh.uuid)
+    const key = `${mesh.uuid}:${matIndex}`
+    const existing = this.targets.get(key)
     if (existing) {
       if (mat.map !== existing.texture) {
         mat.map = existing.texture
@@ -95,42 +142,55 @@ export class PaintController {
       }
       return existing
     }
-    const canvas = document.createElement('canvas')
-    canvas.width = canvas.height = TEX
-    const ctx = canvas.getContext('2d')!
+    const original = makeCtx()
     if (mat.map?.image) {
       try {
-        ctx.drawImage(mat.map.image as CanvasImageSource, 0, 0, TEX, TEX)
+        original.drawImage(mat.map.image as CanvasImageSource, 0, 0, TEX, TEX)
       } catch {
-        seedColor(ctx, mat)
+        seedColor(original, mat)
       }
     } else {
-      seedColor(ctx, mat)
+      seedColor(original, mat)
     }
-    const texture = new THREE.CanvasTexture(canvas)
+    const base = makeCtx()
+    base.drawImage(original.canvas, 0, 0)
+    const display = makeCtx()
+    display.drawImage(base.canvas, 0, 0)
+    const texture = new THREE.CanvasTexture(display.canvas)
     texture.colorSpace = THREE.SRGBColorSpace
     texture.flipY = true
     mat.map = texture
     mat.color.setRGB(1, 1, 1)
     mat.needsUpdate = true
-    const target: Target = { mesh, canvas, ctx, texture }
-    this.targets.set(mesh.uuid, target)
+    const target: Target = {
+      mesh,
+      matIndex,
+      original,
+      base,
+      stroke: makeCtx(),
+      coverage: makeCtx(),
+      display,
+      texture,
+    }
+    this.targets.set(key, target)
     return target
   }
 
-  /** Live paint texture for a mesh, registered as a factory override on commit. */
-  textureFor(mesh: THREE.Mesh): THREE.Texture | null {
-    return this.targets.get(mesh.uuid)?.texture ?? null
+  /** Live paint texture for a mesh slot, registered as a factory override on commit. */
+  textureFor(mesh: THREE.Mesh, matIndex: number): THREE.Texture | null {
+    return this.targets.get(`${mesh.uuid}:${matIndex}`)?.texture ?? null
   }
 
   private onDown(e: PointerEvent): void {
     if (!this.config.active || e.button !== 0) return
     const hit = this.pick(e)
     if (!hit || hit.uv === undefined) return
-    const target = this.ensureTarget(hit.object as THREE.Mesh)
+    const mesh = hit.object as THREE.Mesh
+    const matIndex = this.materialIndexAt(mesh, hit.faceIndex)
+    const target = this.ensureTarget(mesh, matIndex)
     if (!target) return
     this.painting = true
-    this.stroke = hit.object as THREE.Mesh
+    this.strokeTarget = target
     this.lastPx = null
     this.onDragChange?.(true)
     this.stamp(target, hit)
@@ -140,15 +200,16 @@ export class PaintController {
     if (!this.config.active) return
     const hit = this.pick(e)
     if (hit) {
+      const c = this.config.color
+      ;(this.cursor.material as THREE.MeshBasicMaterial).color.setRGB(c.r, c.g, c.b)
       this.cursor.visible = true
       this.cursor.position.copy(hit.point)
       this.cursor.scale.setScalar(this.config.radius)
     } else {
       this.cursor.visible = false
     }
-    if (this.painting && hit?.uv) {
-      const target = this.targets.get((hit.object as THREE.Mesh).uuid)
-      if (target) this.stamp(target, hit)
+    if (this.painting && this.strokeTarget && hit?.uv) {
+      this.stamp(this.strokeTarget, hit)
     }
   }
 
@@ -157,11 +218,12 @@ export class PaintController {
     this.painting = false
     this.lastPx = null
     this.onDragChange?.(false)
-    if (this.stroke) {
-      const t = this.targets.get(this.stroke.uuid)
-      if (t) this.onCommit?.(this.stroke, t.canvas.toDataURL('image/png'))
+    const target = this.strokeTarget
+    this.strokeTarget = null
+    if (target) {
+      this.bake(target)
+      this.onCommit?.(target.mesh, target.display.canvas.toDataURL('image/png'), target.matIndex)
     }
-    this.stroke = null
   }
 
   /**
@@ -204,14 +266,18 @@ export class PaintController {
     return { px, py, rx, ry }
   }
 
-  private dab(ctx: CanvasRenderingContext2D, px: number, py: number, rx: number, ry: number): void {
+  /** One soft dab into the stroke layer; overlaps saturate at alpha 1 (no buildup). */
+  private dab(target: Target, px: number, py: number, rx: number, ry: number): void {
+    const ctx = target.stroke
     const c = this.config.color
     const rgb = `${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)}`
     ctx.save()
     ctx.translate(px, py)
     ctx.scale(rx, ry)
     const grd = ctx.createRadialGradient(0, 0, 0, 0, 0, 1)
-    grd.addColorStop(0, `rgba(${rgb},${this.config.strength})`)
+    const hard = THREE.MathUtils.clamp(this.config.hardness, 0, 0.99)
+    grd.addColorStop(0, `rgba(${rgb},1)`)
+    grd.addColorStop(hard, `rgba(${rgb},1)`)
     grd.addColorStop(1, `rgba(${rgb},0)`)
     ctx.fillStyle = grd
     ctx.beginPath()
@@ -230,13 +296,52 @@ export class PaintController {
       const step = Math.max(1, Math.min(rx, ry) * 0.35)
       const n = Math.min(64, Math.max(1, Math.ceil(dist / step)))
       for (let i = 1; i <= n; i++) {
-        this.dab(target.ctx, this.lastPx.x + (dx * i) / n, this.lastPx.y + (dy * i) / n, rx, ry)
+        this.dab(target, this.lastPx.x + (dx * i) / n, this.lastPx.y + (dy * i) / n, rx, ry)
       }
     } else {
-      this.dab(target.ctx, px, py, rx, ry)
+      this.dab(target, px, py, rx, ry)
     }
     this.lastPx = { x: px, y: py }
+    this.composeDisplay(target)
+  }
+
+  /** Rebuild the visible canvas: base, then the live stroke applied once at strength. */
+  private composeDisplay(target: Target): void {
+    const d = target.display
+    d.globalAlpha = 1
+    d.globalCompositeOperation = 'source-over'
+    d.clearRect(0, 0, TEX, TEX)
+    d.drawImage(target.base.canvas, 0, 0)
+    this.overlayStroke(d, target)
     target.texture.needsUpdate = true
+  }
+
+  /** Apply the stroke layer (paint: brush colour / erase: original) at strength. */
+  private overlayStroke(dst: CanvasRenderingContext2D, target: Target): void {
+    dst.globalAlpha = this.config.strength
+    if (this.config.mode === 'erase') {
+      const tmp = getTmp()
+      tmp.globalAlpha = 1
+      tmp.globalCompositeOperation = 'source-over'
+      tmp.clearRect(0, 0, TEX, TEX)
+      tmp.drawImage(target.original.canvas, 0, 0)
+      tmp.globalCompositeOperation = 'destination-in'
+      tmp.drawImage(target.stroke.canvas, 0, 0)
+      tmp.globalCompositeOperation = 'source-over'
+      dst.drawImage(tmp.canvas, 0, 0)
+    } else {
+      dst.drawImage(target.stroke.canvas, 0, 0)
+    }
+    dst.globalAlpha = 1
+  }
+
+  /** Flatten the stroke into base, grow coverage, hide seams, refresh display. */
+  private bake(target: Target): void {
+    this.overlayStroke(target.base, target)
+    target.coverage.drawImage(target.stroke.canvas, 0, 0)
+    target.stroke.clearRect(0, 0, TEX, TEX)
+    dilate(target.base, target.coverage)
+    this.composeDisplay(target)
   }
 
   dispose(): void {
@@ -254,4 +359,42 @@ export class PaintController {
 const seedColor = (ctx: CanvasRenderingContext2D, mat: THREE.MeshStandardMaterial): void => {
   ctx.fillStyle = mat.color ? `#${mat.color.getHexString(THREE.SRGBColorSpace)}` : '#ffffff'
   ctx.fillRect(0, 0, TEX, TEX)
+}
+
+/**
+ * Bleed painted colour a few texels past its edge so bilinear/mipmap filtering
+ * doesn't sample unpainted gutter texels at UV-island seams. Bounded heuristic,
+ * not full cross-seam painting.
+ */
+const dilate = (baseCtx: CanvasRenderingContext2D, coverageCtx: CanvasRenderingContext2D): void => {
+  const cov = coverageCtx.getImageData(0, 0, TEX, TEX).data
+  const covered = new Uint8Array(TEX * TEX)
+  for (let i = 0; i < covered.length; i++) covered[i] = cov[i * 4 + 3] > 8 ? 1 : 0
+
+  const img = baseCtx.getImageData(0, 0, TEX, TEX)
+  const px = img.data
+  for (let pass = 0; pass < DILATE_PASSES; pass++) {
+    const added: number[] = []
+    for (let y = 0; y < TEX; y++) {
+      for (let x = 0; x < TEX; x++) {
+        const i = y * TEX + x
+        if (covered[i]) continue
+        let ni = -1
+        if (x > 0 && covered[i - 1]) ni = i - 1
+        else if (x < TEX - 1 && covered[i + 1]) ni = i + 1
+        else if (y > 0 && covered[i - TEX]) ni = i - TEX
+        else if (y < TEX - 1 && covered[i + TEX]) ni = i + TEX
+        if (ni >= 0) {
+          px[i * 4] = px[ni * 4]
+          px[i * 4 + 1] = px[ni * 4 + 1]
+          px[i * 4 + 2] = px[ni * 4 + 2]
+          px[i * 4 + 3] = 255
+          added.push(i)
+        }
+      }
+    }
+    if (added.length === 0) break
+    for (const i of added) covered[i] = 1
+  }
+  baseCtx.putImageData(img, 0, 0)
 }

@@ -24,10 +24,21 @@ export function EditorFooter() {
   const selName = selectedId ? nodes[selectedId]?.name : null
   const info = `Объектов: ${count}${selName ? ` · ${selName}` : ''}`
 
+  const buildTime = new Date(__BUILD_TIME__)
+  const buildLabel = Number.isNaN(buildTime.getTime())
+    ? __BUILD_TIME__
+    : buildTime.toLocaleString()
+
   return (
     <footer className="editor-footer">
       <span className="status">{busy ? `⏳ ${status}` : flash || info}</span>
       <span className="credit">
+        <span
+          className="build"
+          title={`${__BUILD_SHA__} · собрано ${buildLabel}`}
+        >
+          v{__APP_VERSION__}·{__BUILD_NO__}
+        </span>
         <a
           href="https://github.com/DagazProject/GLTFConverter"
           target="_blank"

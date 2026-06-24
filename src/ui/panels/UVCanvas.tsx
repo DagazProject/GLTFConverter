@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { projectUV } from '../../application/scene/unwrap.ts'
 import type { ProjectionPlane } from '../../application/scene/unwrap.ts'
 import { isMeshNode } from '../../domain/nodes/SceneNode.ts'
@@ -18,6 +18,31 @@ type Hover =
 
 const VERTEX_HIT = 7
 const EDGE_HIT = 6
+const HANDLE_HIT = 8
+const HANDLE_DRAW = 4
+const ROT_STEM = 22
+
+type GizmoHandle = 'rot' | 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'body'
+interface GizmoBox {
+  minU: number
+  maxU: number
+  minV: number
+  maxV: number
+  cu: number
+  cv: number
+}
+interface DragSnap {
+  cu: number // box centre (rotation pivot)
+  cv: number
+  au: number // scale anchor = the opposite corner/edge, which stays fixed
+  av: number
+  gu: number // grab offset from the anchor (scale is relative to this, no jump)
+  gv: number
+  sclU: boolean // does the grabbed handle scale the U axis?
+  sclV: boolean
+  verts: { i: number; u: number; v: number }[]
+  startAng: number
+}
 
 /**
  * Professional UV editor: vertex & edge picking with hover feedback (so it's
@@ -44,22 +69,28 @@ export function UVCanvas() {
 
   const showTexRef = useRef(true)
   const showGridRef = useRef(true)
+  const [lockAspect, setLockAspect] = useState(true)
 
   const uvRef = useRef<number[]>([])
   const geomIdRef = useRef<string | undefined>(undefined)
   const selRef = useRef<Set<number>>(new Set())
   const hoverRef = useRef<Hover>(null)
+  const gizmoHoverRef = useRef<GizmoHandle | null>(null)
   const viewRef = useRef<View>({ scale: 256, ox: 24, oy: 24 })
   const imgRef = useRef<HTMLImageElement | null>(null)
   const dragRef = useRef<{
-    kind: 'none' | 'move' | 'band' | 'pan'
+    kind: 'none' | 'move' | 'band' | 'pan' | 'scale' | 'scaleU' | 'scaleV' | 'rotate'
     x: number
     y: number
     bx: number
     by: number
     moved: boolean
     shift: boolean
+    snap?: DragSnap
   }>({ kind: 'none', x: 0, y: 0, bx: 0, by: 0, moved: false, shift: false })
+
+  const isGizmoDrag = (k: string): boolean =>
+    k === 'rotate' || k === 'scale' || k === 'scaleU' || k === 'scaleV'
 
   useEffect(() => {
     uvRef.current = geometry?.attributes.uv ? [...geometry.attributes.uv.array] : []
@@ -81,7 +112,8 @@ export function UVCanvas() {
 
   // External selection (e.g. clicking the model) — apply unless mid-drag.
   useEffect(() => {
-    if (dragRef.current.kind === 'move') return
+    const k = dragRef.current.kind
+    if (k === 'move' || isGizmoDrag(k)) return
     selRef.current = new Set(uvSelection)
     draw()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -188,6 +220,123 @@ export function UVCanvas() {
       }
     }
     return res
+  }
+
+  /** AABB of the current selection in UV space, or null when too small for a box. */
+  const gizmoBox = (): GizmoBox | null => {
+    const sel = selRef.current
+    if (sel.size < 2) return null
+    const uv = uvRef.current
+    let minU = Infinity
+    let maxU = -Infinity
+    let minV = Infinity
+    let maxV = -Infinity
+    for (const i of sel) {
+      const u = uv[i * 2]
+      const v = uv[i * 2 + 1]
+      if (u < minU) minU = u
+      if (u > maxU) maxU = u
+      if (v < minV) minV = v
+      if (v > maxV) maxV = v
+    }
+    return { minU, maxU, minV, maxV, cu: (minU + maxU) / 2, cv: (minV + maxV) / 2 }
+  }
+
+  /** Screen-space rect + handle anchors for a gizmo box (Y already ordered). */
+  const gizmoScreen = (b: GizmoBox) => {
+    const [x0, y0] = toScreen(b.minU, b.maxV) // top-left (maxV is top)
+    const [x1, y1] = toScreen(b.maxU, b.minV) // bottom-right
+    const mx = (x0 + x1) / 2
+    const my = (y0 + y1) / 2
+    return { x0, y0, x1, y1, mx, my }
+  }
+
+  const gizmoHandleAt = (px: number, py: number): GizmoHandle | null => {
+    const b = gizmoBox()
+    if (!b) return null
+    const { x0, y0, x1, y1, mx, my } = gizmoScreen(b)
+    const near = (hx: number, hy: number) => Math.hypot(px - hx, py - hy) <= HANDLE_HIT
+    if (near(mx, y0 - ROT_STEM)) return 'rot'
+    const handles: [GizmoHandle, number, number][] = [
+      ['nw', x0, y0], ['ne', x1, y0], ['se', x1, y1], ['sw', x0, y1],
+      ['n', mx, y0], ['e', x1, my], ['s', mx, y1], ['w', x0, my],
+    ]
+    for (const [h, hx, hy] of handles) if (near(hx, hy)) return h
+    if (px >= x0 && px <= x1 && py >= y0 && py <= y1) return 'body'
+    return null
+  }
+
+  const beginGizmo = (handle: GizmoHandle, px: number, py: number) => {
+    const b = gizmoBox()
+    if (!b) return
+    const verts = [...selRef.current].map((i) => ({
+      i,
+      u: uvRef.current[i * 2],
+      v: uvRef.current[i * 2 + 1],
+    }))
+    // Anchor at the OPPOSITE corner/edge so it stays pinned while you drag.
+    let au = b.cu
+    let av = b.cv
+    let sclU = true
+    let sclV = true
+    switch (handle) {
+      case 'nw': au = b.maxU; av = b.minV; break
+      case 'ne': au = b.minU; av = b.minV; break
+      case 'se': au = b.minU; av = b.maxV; break
+      case 'sw': au = b.maxU; av = b.maxV; break
+      case 'e': au = b.minU; sclV = false; break
+      case 'w': au = b.maxU; sclV = false; break
+      case 'n': av = b.minV; sclU = false; break
+      case 's': av = b.maxV; sclU = false; break
+    }
+    const [pu, pv] = toUV(px, py)
+    dragRef.current.snap = {
+      cu: b.cu, cv: b.cv,
+      au, av, gu: pu - au, gv: pv - av, sclU, sclV,
+      verts,
+      startAng: Math.atan2(pv - b.cv, pu - b.cu),
+    }
+  }
+
+  /** Apply an absolute transform (from the drag-start snapshot). */
+  const applyGizmo = (px: number, py: number) => {
+    const s = dragRef.current.snap
+    if (!s) return
+    const kind = dragRef.current.kind
+    const [pu, pv] = toUV(px, py)
+    const uv = uvRef.current
+
+    if (kind === 'rotate') {
+      const ang = Math.atan2(pv - s.cv, pu - s.cu) - s.startAng
+      const c = Math.cos(ang)
+      const sn = Math.sin(ang)
+      for (const { i, u, v } of s.verts) {
+        const du = u - s.cu
+        const dv = v - s.cv
+        uv[i * 2] = s.cu + du * c - dv * sn
+        uv[i * 2 + 1] = s.cv + du * sn + dv * c
+      }
+    } else {
+      // Scale about the anchor (opposite side stays fixed). Factor is relative to
+      // the grab point, so f = 1 at pointer-down (no jump); crossing the anchor
+      // flips sign -> mirror. Only scale an axis with real extent — a zero-extent
+      // grab offset (selection along an axis-aligned UV edge) would blow up.
+      const EXT = 1e-4
+      const okU = s.sclU && Math.abs(s.gu) > EXT
+      const okV = s.sclV && Math.abs(s.gv) > EXT
+      let fu = okU ? (pu - s.au) / s.gu : 1
+      let fv = okV ? (pv - s.av) / s.gv : 1
+      if (lockAspect && okU && okV) {
+        const f = Math.max(Math.abs(fu), Math.abs(fv))
+        fu = fu < 0 ? -f : f
+        fv = fv < 0 ? -f : f
+      }
+      for (const { i, u, v } of s.verts) {
+        uv[i * 2] = s.au + (u - s.au) * fu
+        uv[i * 2 + 1] = s.av + (v - s.av) * fv
+      }
+    }
+    draw()
   }
 
   function draw() {
@@ -318,6 +467,41 @@ export function UVCanvas() {
       ctx.strokeRect(Math.min(d.x, d.bx), Math.min(d.y, d.by), Math.abs(d.bx - d.x), Math.abs(d.by - d.y))
       ctx.setLineDash([])
     }
+
+    // transform gizmo around the selection bounds
+    const gb = gizmoBox()
+    if (gb) {
+      const { x0, y0, x1, y1, mx } = gizmoScreen(gb)
+      const my = (y0 + y1) / 2
+      const hov = gizmoHoverRef.current
+      ctx.strokeStyle = 'rgba(124,196,255,0.8)'
+      ctx.lineWidth = 1.5
+      ctx.strokeRect(x0, y0, x1 - x0, y1 - y0)
+      // rotation stem
+      ctx.beginPath()
+      ctx.moveTo(mx, y0)
+      ctx.lineTo(mx, y0 - ROT_STEM)
+      ctx.stroke()
+      // scale handles
+      const handles: [GizmoHandle, number, number][] = [
+        ['nw', x0, y0], ['n', mx, y0], ['ne', x1, y0], ['e', x1, my],
+        ['se', x1, y1], ['s', mx, y1], ['sw', x0, y1], ['w', x0, my],
+      ]
+      for (const [h, hx, hy] of handles) {
+        ctx.fillStyle = hov === h ? '#ff8a3d' : '#ffce54'
+        ctx.strokeStyle = '#1a1f2b'
+        ctx.lineWidth = 1
+        ctx.fillRect(hx - HANDLE_DRAW, hy - HANDLE_DRAW, HANDLE_DRAW * 2, HANDLE_DRAW * 2)
+        ctx.strokeRect(hx - HANDLE_DRAW, hy - HANDLE_DRAW, HANDLE_DRAW * 2, HANDLE_DRAW * 2)
+      }
+      // rotation knob
+      ctx.fillStyle = hov === 'rot' ? '#ff8a3d' : '#ffce54'
+      ctx.strokeStyle = '#1a1f2b'
+      ctx.beginPath()
+      ctx.arc(mx, y0 - ROT_STEM, HANDLE_DRAW, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.stroke()
+    }
   }
 
   const pushSelection = () => setUvSelection([...selRef.current])
@@ -338,9 +522,29 @@ export function UVCanvas() {
       return
     }
 
+    // Gizmo handles take priority over raw vertex/edge picking.
+    const g = gizmoHandleAt(px, py)
+    if (g && g !== 'body') {
+      drag.kind =
+        g === 'rot' ? 'rotate'
+          : g === 'e' || g === 'w' ? 'scaleU'
+            : g === 'n' || g === 's' ? 'scaleV'
+              : 'scale'
+      beginGizmo(g, px, py)
+      draw()
+      return
+    }
+
     const sel = selRef.current
     const v = vertexAt(px, py)
     const edge = v < 0 ? edgeAt(px, py) : null
+
+    // Inside the box but not on a vertex/edge -> move the whole selection.
+    if (g === 'body' && v < 0 && !edge) {
+      drag.kind = 'move'
+      draw()
+      return
+    }
 
     if (v >= 0) {
       if (!sel.has(v)) {
@@ -369,10 +573,13 @@ export function UVCanvas() {
     const drag = dragRef.current
 
     if (drag.kind === 'none') {
-      // hover feedback
-      const v = vertexAt(px, py)
-      const next: Hover = v >= 0 ? { kind: 'vertex', i: v } : edgeHover(edgeAt(px, py))
-      if (!sameHover(next, hoverRef.current)) {
+      // hover feedback — gizmo handles first (they sit on top)
+      const gh = gizmoHandleAt(px, py)
+      const ghHover = gh && gh !== 'body' ? gh : null
+      const v = ghHover ? -1 : vertexAt(px, py)
+      const next: Hover = v >= 0 ? { kind: 'vertex', i: v } : edgeHover(ghHover ? null : edgeAt(px, py))
+      if (ghHover !== gizmoHoverRef.current || !sameHover(next, hoverRef.current)) {
+        gizmoHoverRef.current = ghHover
         hoverRef.current = next
         draw()
       }
@@ -380,6 +587,12 @@ export function UVCanvas() {
     }
 
     if (Math.hypot(px - drag.x, py - drag.y) > 2) drag.moved = true
+
+    if (isGizmoDrag(drag.kind)) {
+      drag.moved = true
+      applyGizmo(px, py)
+      return
+    }
 
     if (drag.kind === 'pan') {
       viewRef.current.ox += px - drag.x
@@ -408,7 +621,7 @@ export function UVCanvas() {
 
   const onPointerUp = () => {
     const drag = dragRef.current
-    if (drag.kind === 'move' && drag.moved) commit()
+    if ((drag.kind === 'move' || isGizmoDrag(drag.kind)) && drag.moved) commit()
     else if (drag.kind === 'band') {
       const sel = selRef.current
       if (!drag.shift) sel.clear()
@@ -425,6 +638,7 @@ export function UVCanvas() {
       }
       pushSelection()
     }
+    drag.snap = undefined
     drag.kind = 'none'
     draw()
   }
@@ -444,7 +658,11 @@ export function UVCanvas() {
   const commit = () => {
     if (!geometry) return
     setGeometryUV(geometry.id, [...uvRef.current])
-    useEngineStore.getState().engine?.invalidateGeometryCache()
+    // Update the live geometry's UVs in place rather than invalidating the whole
+    // cache — a full rebuild reloads the model and drops the preview's selection.
+    const engine = useEngineStore.getState().engine
+    const updated = mesh ? engine?.updateGeometryUV(mesh.id, uvRef.current) : false
+    if (!updated) engine?.invalidateGeometryCache()
   }
 
   const transformSelected = (fn: (u: number, v: number, cu: number, cv: number) => [number, number]) => {
@@ -479,6 +697,55 @@ export function UVCanvas() {
       return [cu + du * c - dv * s, cv + du * s + dv * c]
     })
 
+  const mirrorX = () => transformSelected((u, v, cu) => [2 * cu - u, v])
+  const mirrorY = () => transformSelected((u, v, _cu, cv) => [u, 2 * cv - v])
+  const offsetSel = (du: number, dv: number) =>
+    transformSelected((u, v) => [u + du, v + dv])
+
+  /** Fit the selection (or all UVs if nothing selected) into 0–1, preserving aspect. */
+  const normalize = () => {
+    const uv = uvRef.current
+    const ids =
+      selRef.current.size > 0
+        ? [...selRef.current]
+        : Array.from({ length: uv.length / 2 }, (_, i) => i)
+    if (ids.length === 0) return
+    let minU = Infinity
+    let maxU = -Infinity
+    let minV = Infinity
+    let maxV = -Infinity
+    for (const i of ids) {
+      const u = uv[i * 2]
+      const v = uv[i * 2 + 1]
+      if (u < minU) minU = u
+      if (u > maxU) maxU = u
+      if (v < minV) minV = v
+      if (v > maxV) maxV = v
+    }
+    const f = 1 / Math.max(maxU - minU, maxV - minV, 1e-6)
+    const offU = (1 - (maxU - minU) * f) / 2 - minU * f
+    const offV = (1 - (maxV - minV) * f) / 2 - minV * f
+    for (const i of ids) {
+      uv[i * 2] = uv[i * 2] * f + offU
+      uv[i * 2 + 1] = uv[i * 2 + 1] * f + offV
+    }
+    commit()
+    draw()
+  }
+
+  // Numeric fields (uncontrolled; read on Enter / button click).
+  const offUStr = useRef('0')
+  const offVStr = useRef('0')
+  const scaleStr = useRef('1')
+  const rotStr = useRef('15')
+  const applyOffset = () =>
+    offsetSel(parseFloat(offUStr.current) || 0, parseFloat(offVStr.current) || 0)
+  const applyScale = () => {
+    const f = parseFloat(scaleStr.current)
+    if (f > 0) scaleSel(f)
+  }
+  const applyRot = () => rotateSel(parseFloat(rotStr.current) || 0)
+
   const project = (plane: ProjectionPlane) => {
     if (!geometry) return
     const uv = projectUV(
@@ -505,9 +772,48 @@ export function UVCanvas() {
         <button className="mini" title="Увеличить выделение" onClick={() => scaleSel(1.1)}>＋</button>
         <button className="mini" title="Повернуть −15°" onClick={() => rotateSel(-15)}>↺</button>
         <button className="mini" title="Повернуть +15°" onClick={() => rotateSel(15)}>↻</button>
+        <button className="mini" title="Повернуть −90°" onClick={() => rotateSel(-90)}>⟲90</button>
+        <button className="mini" title="Повернуть +90°" onClick={() => rotateSel(90)}>⟳90</button>
+        <span className="sep" />
+        <button className="mini" title="Отразить по X" onClick={mirrorX}>⇄</button>
+        <button className="mini" title="Отразить по Y" onClick={mirrorY}>⇅</button>
+        <button className="mini" title="Вписать в 0–1" onClick={normalize}>0–1</button>
+        <span className="sep" />
+        <button
+          className={`mini${lockAspect ? ' active' : ''}`}
+          title="Сохранять пропорции при масштабе углом (вкл/выкл)"
+          aria-pressed={lockAspect}
+          onClick={() => setLockAspect((v) => !v)}
+        >
+          {lockAspect ? '▣' : '▢'} AR
+        </button>
         <span className="sep" />
         <button className="mini" onClick={() => { fit(); draw() }}>Вписать</button>
         <button className="mini" onClick={() => { selRef.current.clear(); pushSelection(); draw() }}>Снять</button>
+      </div>
+
+      <div className="uv-toolbar">
+        <span className="set-label" style={{ margin: 0 }}>ΔU</span>
+        <input className="uv-num" type="number" step="0.01" defaultValue="0"
+          onChange={(e) => { offUStr.current = e.target.value }}
+          onKeyDown={(e) => { if (e.key === 'Enter') applyOffset() }} />
+        <span className="set-label" style={{ margin: 0 }}>ΔV</span>
+        <input className="uv-num" type="number" step="0.01" defaultValue="0"
+          onChange={(e) => { offVStr.current = e.target.value }}
+          onKeyDown={(e) => { if (e.key === 'Enter') applyOffset() }} />
+        <button className="mini" onClick={applyOffset}>Сдвиг</button>
+        <span className="sep" />
+        <span className="set-label" style={{ margin: 0 }}>×</span>
+        <input className="uv-num" type="number" step="0.05" defaultValue="1"
+          onChange={(e) => { scaleStr.current = e.target.value }}
+          onKeyDown={(e) => { if (e.key === 'Enter') applyScale() }} />
+        <button className="mini" onClick={applyScale}>Масштаб</button>
+        <span className="sep" />
+        <span className="set-label" style={{ margin: 0 }}>°</span>
+        <input className="uv-num" type="number" step="5" defaultValue="15"
+          onChange={(e) => { rotStr.current = e.target.value }}
+          onKeyDown={(e) => { if (e.key === 'Enter') applyRot() }} />
+        <button className="mini" onClick={applyRot}>Поворот</button>
       </div>
 
       <canvas

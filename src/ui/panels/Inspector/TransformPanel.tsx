@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { SceneNode } from '../../../domain/nodes/SceneNode.ts'
 import type { Transform } from '../../../domain/scene/Transform.ts'
+import { MIN_SCALE } from '../../../domain/scene/Transform.ts'
 import { useProjectStore } from '../../../state/useProjectStore.ts'
 import { Vec3Field } from './widgets.tsx'
 
@@ -45,6 +46,7 @@ export function TransformPanel({ node }: { node: SceneNode }) {
       <Vec3Field
         label="Масштаб"
         value={t.scale}
+        min={MIN_SCALE}
         onChange={(scale) => update({ scale })}
       />
     </div>

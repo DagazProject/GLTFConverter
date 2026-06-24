@@ -24,11 +24,11 @@ export function ViewportCanvas() {
         useProjectStore.getState().setTransform(id, transform),
       onLightIntensity: (id, intensity) =>
         useProjectStore.getState().updateLight(id, { intensity }),
-      onPaintCommit: (id, dataUrl) => {
+      onPaintCommit: (id, dataUrl, matIndex) => {
         const store = useProjectStore.getState()
         const node = store.project.scene.nodes[id]
         if (!node || !isMeshNode(node)) return
-        const matId = node.materialIds[0]
+        const matId = node.materialIds[matIndex] ?? node.materialIds[0]
         if (!matId) return
         const mat = store.project.assets.materials[matId]
         // Reuse the material's existing map texture asset, else create one.
@@ -51,7 +51,7 @@ export function ViewportCanvas() {
         }
         store.updateMaterial(matId, { color: { r: 1, g: 1, b: 1 }, vertexColors: false })
         // Keep showing the live paint canvas (avoids async reload flicker).
-        instance.pinPaintTexture(id, matId)
+        instance.pinPaintTexture(id, matId, matIndex)
       },
       onGeometryCommit: (id) => {
         const geo = instance.getMeshGeometry(id)
@@ -70,6 +70,7 @@ export function ViewportCanvas() {
 
     const ed = useEditorStore.getState()
     instance.setTransformMode(ed.transformMode)
+    instance.setUniformScale(ed.uniformScale)
     instance.setSubObjectMode(ed.subObjectMode)
     instance.setSelection(ed.selectedId)
     instance.setPaint(ed.paint)
@@ -90,10 +91,12 @@ export function ViewportCanvas() {
   // Editor state -> engine tooling.
   const selectedId = useEditorStore((s) => s.selectedId)
   const transformMode = useEditorStore((s) => s.transformMode)
+  const uniformScale = useEditorStore((s) => s.uniformScale)
   const subObjectMode = useEditorStore((s) => s.subObjectMode)
   const paint = useEditorStore((s) => s.paint)
   useEffect(() => engine?.setSelection(selectedId), [selectedId, engine])
   useEffect(() => engine?.setTransformMode(transformMode), [transformMode, engine])
+  useEffect(() => engine?.setUniformScale(uniformScale), [uniformScale, engine])
   useEffect(() => engine?.setSubObjectMode(subObjectMode), [subObjectMode, engine])
   useEffect(() => engine?.setPaint(paint), [paint, engine])
 

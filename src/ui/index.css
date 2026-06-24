@@ -154,6 +154,12 @@ input[type='checkbox'] {
   align-items: center;
   gap: 14px;
 }
+.editor-footer .build {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.2px;
+  opacity: 0.7;
+  cursor: default;
+}
 .editor-footer a {
   color: var(--accent);
   text-decoration: none;
@@ -399,6 +405,15 @@ input[type='checkbox'] {
   height: 18px;
   background: var(--border);
   margin: 0 3px;
+}
+.uv-num {
+  width: 52px;
+  padding: 2px 4px;
+  font-size: 11px;
+  background: #0e1118;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
 }
 .uv-canvas {
   display: block;

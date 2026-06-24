@@ -23,6 +23,7 @@ export type IconName =
   | 'image'
   | 'grip'
   | 'brush'
+  | 'checker'
 
 const PATHS: Record<IconName, ReactNode> = {
   move: <path d="M12 3l3 3h-2v5h5V9l3 3-3 3v-2h-5v5h2l-3 3-3-3h2v-5H6v2l-3-3 3-3v2h5V6H9z" />,
@@ -115,6 +116,13 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <path d="M15 4l5 5-7 7-5-5z" />
       <path d="M8 11c-2 0-4 1.5-4 4 0 1.5 1 3 3 3 2.5 0 4-2 4-4" />
+    </>
+  ),
+  checker: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="1.5" />
+      <rect x="3" y="3" width="9" height="9" fill="currentColor" stroke="none" />
+      <rect x="12" y="12" width="9" height="9" fill="currentColor" stroke="none" />
     </>
   ),
 }

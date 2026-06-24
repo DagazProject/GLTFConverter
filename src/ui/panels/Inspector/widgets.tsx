@@ -24,9 +24,11 @@ export function Vec3Field(props: {
   label: string
   value: { x: number; y: number; z: number }
   step?: number
+  /** Optional per-axis lower bound (e.g. scale must stay positive). */
+  min?: number
   onChange: (v: { x: number; y: number; z: number }) => void
 }) {
-  const { value, onChange, step = 0.1 } = props
+  const { value, onChange, step = 0.1, min } = props
   return (
     <div className="field">
       <label>{props.label}</label>
@@ -36,10 +38,12 @@ export function Vec3Field(props: {
             key={axis}
             type="number"
             step={step}
+            min={min}
             value={round(value[axis])}
-            onChange={(e) =>
-              onChange({ ...value, [axis]: parseFloat(e.target.value) || 0 })
-            }
+            onChange={(e) => {
+              const v = parseFloat(e.target.value) || 0
+              onChange({ ...value, [axis]: min != null ? Math.max(min, v) : v })
+            }}
           />
         ))}
       </div>

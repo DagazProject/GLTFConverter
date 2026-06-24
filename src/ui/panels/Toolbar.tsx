@@ -3,6 +3,7 @@ import { importAccept, importFile } from '../../application/import/ImportService
 import { exportScene } from '../../application/export/ExportService.ts'
 import type { ExportFormat } from '../../application/export/ExportService.ts'
 import { isMeshNode } from '../../domain/nodes/SceneNode.ts'
+import { identityTransform } from '../../domain/scene/Transform.ts'
 import type { TransformMode } from '../../engine/gizmos/TransformGizmo.ts'
 import { SUB_OBJECT_MODES } from '../../engine/subobject/SubObjectMode.ts'
 import type { SubObjectMode } from '../../engine/subobject/SubObjectMode.ts'
@@ -31,6 +32,8 @@ const SUB_LABEL: Record<SubObjectMode, { icon: IconName; label: string }> = {
 export function Toolbar() {
   const transformMode = useEditorStore((s) => s.transformMode)
   const setTransformMode = useEditorStore((s) => s.setTransformMode)
+  const uniformScale = useEditorStore((s) => s.uniformScale)
+  const setUniformScale = useEditorStore((s) => s.setUniformScale)
   const subObjectMode = useEditorStore((s) => s.subObjectMode)
   const setSubObjectMode = useEditorStore((s) => s.setSubObjectMode)
 
@@ -42,6 +45,7 @@ export function Toolbar() {
   const setPaint = useEditorStore((s) => s.setPaint)
 
   const mergeFragment = useProjectStore((s) => s.mergeFragment)
+  const setTransform = useProjectStore((s) => s.setTransform)
   const select = useEditorStore((s) => s.select)
   const setStatus = useEditorStore((s) => s.setStatus)
   const setBusy = useEditorStore((s) => s.setBusy)
@@ -121,6 +125,21 @@ export function Toolbar() {
             <Icon name={icon} />
           </button>
         ))}
+        <button
+          className={`icon-btn${uniformScale ? ' active' : ''}`}
+          onClick={() => setUniformScale(!uniformScale)}
+          title="Равномерный масштаб (сохранять пропорции)"
+        >
+          <Icon name="grip" />
+        </button>
+        <button
+          className="uv-launch"
+          disabled={!node}
+          onClick={() => selectedId && setTransform(selectedId, identityTransform())}
+          title="Сбросить трансформацию (позиция 0, поворот 0, масштаб 1)"
+        >
+          Сброс
+        </button>
       </div>
 
       <div className="group">
@@ -161,6 +180,15 @@ export function Toolbar() {
               value={rgbToHexString(paint.color)}
               onChange={(e) => setPaint({ color: hexStringToRgb(e.target.value) })}
             />
+            <button
+              className={`icon-btn${paint.mode === 'erase' ? ' active' : ''}`}
+              title="Ластик (восстановить исходную текстуру)"
+              onClick={() =>
+                setPaint({ mode: paint.mode === 'erase' ? 'paint' : 'erase' })
+              }
+            >
+              <Icon name="trash" size={16} />
+            </button>
             <label title="Радиус">
               R
               <input
@@ -181,6 +209,17 @@ export function Toolbar() {
                 step={0.05}
                 value={paint.strength}
                 onChange={(e) => setPaint({ strength: parseFloat(e.target.value) })}
+              />
+            </label>
+            <label title="Жёсткость края">
+              H
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={paint.hardness}
+                onChange={(e) => setPaint({ hardness: parseFloat(e.target.value) })}
               />
             </label>
           </div>

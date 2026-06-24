@@ -11,7 +11,28 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Only deploy where the Timeweb secrets are actually configured (this fork).
+  # Upstream and other forks have no secrets, so they skip the deploy entirely.
+  # Secrets can't be read in a job/step `if`, so gate via this guard's output.
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        env:
+          HOST: ${{ secrets.TIMEWEB_SSH_HOST }}
+        run: |
+          if [ -n "$HOST" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Timeweb deploy secrets not configured — skipping deploy."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
   deploy:
+    needs: guard
+    if: needs.guard.outputs.ready == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

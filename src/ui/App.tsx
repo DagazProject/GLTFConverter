@@ -80,6 +80,12 @@ export function App() {
       } else if (key === 'w') editor.setTransformMode('translate')
       else if (key === 'e') editor.setTransformMode('rotate')
       else if (key === 'r') editor.setTransformMode('scale')
+      else if ((e.key === '[' || e.key === ']') && editor.paint.active) {
+        // Resize the paint brush like a graphics editor, clamped to the slider range.
+        const factor = e.key === ']' ? 1.15 : 1 / 1.15
+        const radius = Math.min(3, Math.max(0.05, editor.paint.radius * factor))
+        editor.setPaint({ radius })
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
